@@ -9632,15 +9632,31 @@ return( collection );
 };
 _.sortOnPropertyUsingNaturalOrder = function( collection, name, direction ) {
 direction = ( direction || "asc" );
-var sortIndicator = ( direction === "asc" ? -1 : 1 );
-collection.sort(
-function( a, b ) {
-var aMixed = _.normalizeMixedDataValue( a.name.toLowerCase() );
-var bMixed = _.normalizeMixedDataValue( b.name.toLowerCase() );
-return( aMixed < bMixed ? sortIndicator : -sortIndicator );
+var sortModifier = ( direction === "asc" )
+? 1
+: -1
+;
+var sortedCollection = collection
+.map(
+function( item ) {
+return({
+operand: _.normalizeMixedDataValue( item[ name ].toLowerCase() ),
+original: item
+});
 }
-);
-return( collection );
+)
+.sort(
+function( a, b ) {
+return( sortModifier * a.operand.localeCompare( b.operand ) );
+}
+)
+.map(
+function( sortedItem ) {
+return( sortedItem.original );
+}
+)
+;
+return( sortedCollection );
 };
 _.sortOnPropertyUsingLowerCase = function( collection, name, direction ) {
 direction = ( direction || "asc" );
@@ -10469,12 +10485,14 @@ app.factory('sortScreens', sortScreensFactory);
 /** @ngInject */
 function sortScreensFactory(_) {
 return function sortScreens(screens, dividers, sortTypeID) {
-var sortKey = sortTypeID === 2 ? "name" : "sort";
+if ( sortTypeID === 2 ) {
+return( _.sortOnPropertyUsingNaturalOrder( screens, "name" ) );
+}
 var sortedDividers = _.sortBy(dividers, "sort");
 var groupedScreens = _.chain(screens)
 .groupBy("screenGroupId")
 .mapValues(function (screens) {
-return _.sortBy(screens, sortKey);
+return _.sortBy(screens, "sort");
 })
 .value();
 return sortedDividers.reduce(function (sortedScreens, divider) {
@@ -15982,6 +16000,7 @@ analyticsService.setupTrackGrowthForOptimizelyCampaigns();
 config.LOADING_COMPLETE_PERCENT = 50;
 analyticsService.segmentIo();
 analyticsService.googleAnalytics();
+analyticsService.track("ShareLink.Viewed",{Version: config.experimentV2 });
 analyticsService.trackGrowthPage("Share", "Share");
 analyticsService.trackGrowth("App - Public Share - View Project", {
 "Project Type": "Prototype",
@@ -16550,6 +16569,7 @@ $scope.isV2 = ( config.enableV2View || false );
 $scope.hasSentRequest = false;
 $scope.isCommentContextOpen = false;
 $scope.isInspectOpen = false;
+$scope.isToolbarHiden = false;
 $scope.UILoaded = false;
 $scope.firstInspectScreen = searchInspectData(config.screens);
 $scope.includeInspectTool = $scope.firstInspectScreen >= 0;
@@ -16823,12 +16843,24 @@ pendingShareConfigChangeEvent = "";
 }
 );
 }
+}
+);
+$( window ).on(
+"keydown",
+function handleShareKeyCombos( event ) {
 if ($scope.isV2 && event.type == "keydown" && event.keyCode == 27) {
 $scope.$broadcast("toolbar.closeInspectRequest");
 $scope.$broadcast("toolbar.closeSMS");
 }
+if ($scope.isV2 && (event.ctrlKey || event.metaKey) && event.which == 190) {
+$scope.$apply(function() {
+$scope.UILoaded = !$scope.UILoaded;
+});
+$scope.$broadcast("toolbar.closeInspectRequest");
+$scope.$broadcast("toolbar.closeSMS");
 }
-);
+}
+)
 beforeUnloadService.push(
 this,
 function() {
@@ -20162,6 +20194,7 @@ function applyRemoteData( share, screens, comments, hotspots ) {
 $scope.share = share;
 $scope.includeBrowseTool = share.isLoadAllScreens;
 $scope.includeCommentsTool = share.isCommentingAllowed;
+$scope.showInspectTool = share.isInspectAllowed;
 $scope.commentCount = comments.length;
 $scope.unreadCommentCount = _.countWithProperty( comments, "isUnread", true );
 tourData.hasMultipleScreens = screens.length > 1;
@@ -20403,6 +20436,7 @@ $scope.displayFilename = "";
 $scope.share = null;
 $scope.includeBrowseTool = false;
 $scope.includeCommentsTool = false;
+$scope.showInspectTool = false;
 $scope.isShowingComments = ( renderContext.getNextSection() === "comments" );
 $scope.commentCount = 0;
 $scope.unreadCommentCount = 0;
@@ -20885,6 +20919,9 @@ if ( event.metaKey ) {
 return;
 }
 if ( keyComboHelper.isEscapeKeyEvent( event ) ) {
+closeBrowse();
+} else if ( !event.ctrlKey && keyComboHelper.isCharKeyEvent( event, "b" ) ) {
+event.preventDefault();
 closeBrowse();
 }
 };
@@ -25387,12 +25424,14 @@ var name = criteria.name;
 var email = criteria.email;
 var password = criteria.password;
 var marketingOptOut = criteria.marketingOptOut;
+var originUserID = config.user.id // capture anonymous user's ID
 var postData = {
 name: name,
 email: email,
 password: password,
 marketingOptOut: marketingOptOut,
-submissionForm: submissionForm
+submissionForm: submissionForm,
+originUserID: originUserID
 };
 var postOptions = {
 headers: { "Content-Type": "application/x-www-form-urlencoded" }
